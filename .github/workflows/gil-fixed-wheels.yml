@@ -55,6 +55,7 @@ jobs:
           TAOSWS_LOCAL_INTEGRATION: '1'
         run: python -m pytest taos-ws-py/tests/test_gil_release.py -q
       - name: Upload wheel
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: taos-ws-py-gil-fixed-${{ runner.os }}-x86_64

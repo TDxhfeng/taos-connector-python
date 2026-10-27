@@ -82,7 +82,7 @@ def local_database():
     database = 'gil_regression_' + uuid.uuid4().hex
     connection.execute(f'CREATE DATABASE {database}')
     try:
-        connection.execute(f'CREATE TABLE {database}.bars (ts TIMESTAMP, value BIGINT, price DOUBLE)')
+        connection.execute(f'CREATE TABLE {database}.bars (ts TIMESTAMP, reading BIGINT, price DOUBLE)')
         for start in range(0, 12000, 1000):
             values = ''.join(f'({1700000000000 + i},{i},{i + 0.25})' for i in range(start, start + 1000))
             connection.execute(f'INSERT INTO {database}.bars VALUES {values}')
@@ -98,7 +98,7 @@ def test_cursor_fetch_and_query_releases_gil(local_database):
         connection = taosws.connect(f'taosws://root:taosdata@127.0.0.1:{port}')
         try:
             cursor, _, _ = sample_threads(connection.cursor)
-            sql = f'SELECT value, price FROM {local_database}.bars ORDER BY ts'
+            sql = f'SELECT reading, price FROM {local_database}.bars ORDER BY ts'
             _, elapsed, gap = sample_threads(lambda: cursor.execute(sql))
             assert elapsed < 0.04 or gap < elapsed * 0.75, (elapsed, gap)
             rows, elapsed, gap = sample_threads(cursor.fetchall)
@@ -109,11 +109,14 @@ def test_cursor_fetch_and_query_releases_gil(local_database):
             cursor.execute(sql)
             assert cursor.fetchone() == rows[0]
             assert cursor.fetchmany(17) == rows[1:18]
-            assert cursor.fetchall() == rows[18:]
+            remaining = []
+            while batch := cursor.fetchmany(1000):
+                remaining.extend(batch)
+            assert remaining == rows[18:]
             cursor.execute(sql)
-            assert cursor.fetchallintodict()[0] == {'value': 0, 'price': 0.25}
+            assert cursor.fetchallintodict()[0] == {'reading': 0, 'price': 0.25}
             cursor.execute(sql)
-            assert cursor.fetch_all_into_dict()[-1] == {'value': 11999, 'price': 11999.25}
+            assert cursor.fetch_all_into_dict()[-1] == {'reading': 11999, 'price': 11999.25}
             assert list(connection.query(sql)) == rows
             assert list(connection.query_with_req_id(sql, 54321)) == rows
             cursor.close()
