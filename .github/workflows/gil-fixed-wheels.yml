@@ -1,0 +1,66 @@
+name: Build GIL-fixed wheels
+
+on:
+  push:
+    branches: [fix/gil-release-0.7.0]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.os }} Python 3.10
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          architecture: x64
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Linux wheel
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: taos-ws-py
+          target: x86_64
+          manylinux: '2014'
+          args: --release --locked --strip --out ../wheelhouse
+      - name: Build Windows wheel
+        if: runner.os == 'Windows'
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: taos-ws-py
+          target: x64
+          args: --release --locked --strip --out ../wheelhouse
+      - name: Install and smoke-test wheel
+        shell: bash
+        run: |
+          python -m pip install pytest tzdata
+          python -m pip install --no-deps --no-index --find-links wheelhouse 'taos-ws-py==0.7.0+fastbull.1'
+          python -c "import taosws; assert taosws.__version__ == '0.7.0+fastbull.1'; print(taosws.__version__)"
+          python -m pytest taos-ws-py/tests/test_gil_release.py -q
+      - name: Start disposable integration database
+        if: runner.os == 'Linux'
+        run: docker run -d --name gil-test-tdengine -p 6041:6041 tdengine/tdengine:3.3.6.0
+      - name: Test query and fetch paths against local database
+        if: runner.os == 'Linux'
+        env:
+          TAOSWS_LOCAL_INTEGRATION: '1'
+        run: python -m pytest taos-ws-py/tests/test_gil_release.py -q
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: taos-ws-py-gil-fixed-${{ runner.os }}-x86_64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 30
+      - name: Integration database logs
+        if: failure() && runner.os == 'Linux'
+        run: docker logs gil-test-tdengine || true
